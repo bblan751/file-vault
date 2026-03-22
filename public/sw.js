@@ -1,16 +1,16 @@
 const CACHE_NAME = 'file-vault-v1';
-const APP_SHELL = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png',
-];
+const BASE = self.registration.scope;
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(APP_SHELL);
+      return cache.addAll([
+        BASE,
+        BASE + 'index.html',
+        BASE + 'manifest.json',
+        BASE + 'icons/icon-192.png',
+        BASE + 'icons/icon-512.png',
+      ]);
     })
   );
   self.skipWaiting();
@@ -30,7 +30,6 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // Only handle GET requests
   if (event.request.method !== 'GET') return;
 
   event.respondWith(
@@ -39,7 +38,6 @@ self.addEventListener('fetch', (event) => {
 
       return fetch(event.request)
         .then((response) => {
-          // Cache successful responses for app shell assets
           if (response.ok && response.type === 'basic') {
             const clone = response.clone();
             caches.open(CACHE_NAME).then((cache) => {
@@ -49,9 +47,8 @@ self.addEventListener('fetch', (event) => {
           return response;
         })
         .catch(() => {
-          // For navigation requests, return the cached index.html
           if (event.request.mode === 'navigate') {
-            return caches.match('/index.html');
+            return caches.match(BASE + 'index.html');
           }
         });
     })
