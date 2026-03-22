@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm create:*)",
+      "Bash(cp -r temp-init/* .)",
+      "Bash(cp temp-init/.gitignore .)",
+      "Bash(cp temp-init/.eslintrc* .)",
+      "Bash(rm -rf temp-init)",
+      "Bash(npm install:*)",
+      "Bash(cd:*)",
+      "Bash(node -e \":*)",
+      "Bash(node scripts/generate-icons.mjs)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run:*)",
+      "Bash(timeout 10 npx vite --host)",
+      "Bash(gh auth:*)"
+    ]
+  }
+}
