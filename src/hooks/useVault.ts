@@ -312,6 +312,7 @@ export function useVault() {
     const type = vaultTypeRef.current;
     const key = keyRef.current;
 
+    const salt = await getSalt();
     const files = await getFileIndex(key, type);
     const folders = await getFolders(key, type);
 
@@ -328,7 +329,7 @@ export function useVault() {
     }
 
     const payload = JSON.stringify({
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       files,
       folders,
@@ -339,39 +340,57 @@ export function useVault() {
     const encoded = new TextEncoder().encode(payload);
     const { encrypted, iv } = await encrypt(key, encoded.buffer as ArrayBuffer);
 
-    // Pack as: 12 bytes IV + encrypted data
+    // Pack as: 1 byte salt length + salt + 12 bytes IV + encrypted data
     const ivBytes = new Uint8Array(iv);
     const encBytes = new Uint8Array(encrypted);
-    const combined = new Uint8Array(ivBytes.length + encBytes.length);
-    combined.set(ivBytes, 0);
-    combined.set(encBytes, ivBytes.length);
+    const combined = new Uint8Array(1 + salt.length + ivBytes.length + encBytes.length);
+    combined[0] = salt.length;
+    combined.set(salt, 1);
+    combined.set(ivBytes, 1 + salt.length);
+    combined.set(encBytes, 1 + salt.length + ivBytes.length);
 
     return new Blob([combined], { type: 'application/octet-stream' });
   }, []);
 
-  const importBackup = useCallback(async (file: File): Promise<{ fileCount: number; folderCount: number }> => {
+  const importBackup = useCallback(async (file: File, pin: string): Promise<{ fileCount: number; folderCount: number }> => {
     if (!keyRef.current) throw new Error('Vault locked');
     const type = vaultTypeRef.current;
-    const key = keyRef.current;
+    const currentKey = keyRef.current;
 
     const arrayBuffer = await file.arrayBuffer();
     const combined = new Uint8Array(arrayBuffer);
 
-    // Extract IV (first 12 bytes) and encrypted data
-    const iv = combined.slice(0, 12);
-    const encData = combined.slice(12);
+    let backupKey: CryptoKey;
+    let iv: Uint8Array;
+    let encData: Uint8Array;
+
+    // Detect format: v2 has salt embedded, v1 starts with 12-byte IV directly
+    const saltLen = combined[0];
+    if (saltLen > 0 && saltLen <= 64 && combined.length > 1 + saltLen + 12) {
+      // v2 format: 1 byte salt length + salt + 12 bytes IV + encrypted
+      const backupSalt = combined.slice(1, 1 + saltLen);
+      iv = combined.slice(1 + saltLen, 1 + saltLen + 12);
+      encData = combined.slice(1 + saltLen + 12);
+      backupKey = await deriveKey(pin, backupSalt);
+    } else {
+      // v1 format (legacy): 12 bytes IV + encrypted, uses current salt
+      iv = combined.slice(0, 12);
+      encData = combined.slice(12);
+      const currentSalt = await getSalt();
+      backupKey = await deriveKey(pin, currentSalt);
+    }
 
     let decrypted: ArrayBuffer;
     try {
-      decrypted = await decrypt(key, encData.buffer.slice(encData.byteOffset, encData.byteOffset + encData.byteLength), iv);
+      decrypted = await decrypt(backupKey, encData.buffer.slice(encData.byteOffset, encData.byteOffset + encData.byteLength) as ArrayBuffer, iv);
     } catch {
-      throw new Error('Failed to decrypt backup. Make sure you are using the same PIN that created this backup.');
+      throw new Error('Failed to decrypt backup. Check that the PIN matches the one used to create this backup.');
     }
 
     const json = new TextDecoder().decode(decrypted);
     const payload = JSON.parse(json);
 
-    if (payload.version !== 1) {
+    if (payload.version !== 1 && payload.version !== 2) {
       throw new Error('Unsupported backup version');
     }
 
@@ -380,8 +399,8 @@ export function useVault() {
     const fileBlobs: Record<string, string> = payload.fileBlobs;
 
     // Get existing data to merge
-    const existingFiles = await getFileIndex(key, type);
-    const existingFolders = await getFolders(key, type);
+    const existingFiles = await getFileIndex(currentKey, type);
+    const existingFolders = await getFolders(currentKey, type);
     const existingFileIds = new Set(existingFiles.map((f) => f.id));
     const existingFolderIds = new Set(existingFolders.map((f) => f.id));
 
@@ -399,22 +418,21 @@ export function useVault() {
     // Import files that don't already exist
     for (const fileMeta of backupFiles) {
       if (!existingFileIds.has(fileMeta.id) && fileBlobs[fileMeta.id]) {
-        // Decode base64 back to ArrayBuffer
         const binary = atob(fileBlobs[fileMeta.id]);
         const bytes = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i++) {
           bytes[i] = binary.charCodeAt(i);
         }
 
-        // Store the file (re-encrypts with current key)
-        const newIv = await storeFile(key, type, fileMeta.id, bytes.buffer as ArrayBuffer);
+        // Store the file (re-encrypts with current vault key)
+        const newIv = await storeFile(currentKey, type, fileMeta.id, bytes.buffer as ArrayBuffer);
         existingFiles.push({ ...fileMeta, iv: newIv });
         importedFiles++;
       }
     }
 
-    await saveFileIndex(key, type, existingFiles);
-    await saveFolders(key, type, existingFolders);
+    await saveFileIndex(currentKey, type, existingFiles);
+    await saveFolders(currentKey, type, existingFolders);
     await refreshFiles();
 
     return { fileCount: importedFiles, folderCount: importedFolders };

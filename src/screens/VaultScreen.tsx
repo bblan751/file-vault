@@ -29,7 +29,7 @@ interface VaultScreenProps {
   renameFolder: (id: string, name: string) => Promise<void>;
   deleteFolder: (id: string) => Promise<void>;
   exportBackup: () => Promise<Blob>;
-  importBackup: (file: File) => Promise<{ fileCount: number; folderCount: number }>;
+  importBackup: (file: File, pin: string) => Promise<{ fileCount: number; folderCount: number }>;
   refreshFiles: () => Promise<void>;
 }
 
@@ -71,6 +71,9 @@ export function VaultScreen({
   );
   const [showDestroyConfirm, setShowDestroyConfirm] = useState(0);
   const [backupStatus, setBackupStatus] = useState<string | null>(null);
+  const [showBackupPinDialog, setShowBackupPinDialog] = useState(false);
+  const [backupPinValue, setBackupPinValue] = useState('');
+  const [pendingBackupFile, setPendingBackupFile] = useState<File | null>(null);
 
   const photoInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -145,20 +148,31 @@ export function VaultScreen({
     }
   }, [exportBackup]);
 
-  const handleBackupImport = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleBackupFileSelected = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = '';
+    setPendingBackupFile(file);
+    setBackupPinValue('');
+    setShowBackupPinDialog(true);
+  }, []);
+
+  const handleBackupImportConfirm = useCallback(async () => {
+    if (!pendingBackupFile || !backupPinValue) return;
+    setShowBackupPinDialog(false);
     try {
       setBackupStatus('Importing...');
-      const result = await importBackup(file);
+      const result = await importBackup(pendingBackupFile, backupPinValue);
       setBackupStatus(`Imported ${result.fileCount} file${result.fileCount !== 1 ? 's' : ''} and ${result.folderCount} folder${result.folderCount !== 1 ? 's' : ''}`);
       setTimeout(() => setBackupStatus(null), 4000);
     } catch (err) {
       setBackupStatus('Import failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
       setTimeout(() => setBackupStatus(null), 5000);
+    } finally {
+      setPendingBackupFile(null);
+      setBackupPinValue('');
     }
-  }, [importBackup]);
+  }, [importBackup, pendingBackupFile, backupPinValue]);
 
   const handleExport = useCallback(async (file: FileMeta) => {
     const buffer = await readFile(file.id, file.iv);
@@ -242,7 +256,7 @@ export function VaultScreen({
         type="file"
         accept=".vault"
         className="hidden"
-        onChange={handleBackupImport}
+        onChange={handleBackupFileSelected}
       />
 
       {/* Header */}
@@ -712,6 +726,50 @@ export function VaultScreen({
             >
               Cancel
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Backup PIN Dialog */}
+      {showBackupPinDialog && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60" onClick={() => { setShowBackupPinDialog(false); setPendingBackupFile(null); }} />
+          <div className="relative bg-[#1a1a1c] rounded-2xl p-6 w-[90%] max-w-[350px]">
+            <h3 className="text-white font-[Instrument_Sans] font-semibold mb-2">Backup PIN</h3>
+            <p className="text-[#888] text-xs font-[Instrument_Sans] mb-4">
+              Enter the 6-digit PIN that was used when this backup was created.
+            </p>
+            <input
+              type="password"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              maxLength={6}
+              value={backupPinValue}
+              onChange={(e) => setBackupPinValue(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              placeholder="000000"
+              className="w-full bg-[#222224] text-white text-center rounded-xl px-4 py-3 font-[DM_Mono]
+                text-[16px] tracking-[0.5em] outline-none border border-[#333] focus:border-[#f5a623] mb-4"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && backupPinValue.length === 6) handleBackupImportConfirm();
+              }}
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setShowBackupPinDialog(false); setPendingBackupFile(null); }}
+                className="flex-1 py-3 rounded-xl bg-[#333] text-white font-[Instrument_Sans] min-h-[44px]"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleBackupImportConfirm}
+                disabled={backupPinValue.length !== 6}
+                className="flex-1 py-3 rounded-xl bg-[#f5a623] text-black font-[Instrument_Sans]
+                  font-semibold min-h-[44px] disabled:opacity-40"
+              >
+                Import
+              </button>
+            </div>
           </div>
         </div>
       )}
