@@ -580,7 +580,9 @@ export function VaultScreen({
       {/* File Preview */}
       <FilePreview
         file={previewFile}
+        allFiles={allFiles}
         onClose={() => setPreviewFile(null)}
+        onNavigate={setPreviewFile}
         readFile={readFile}
         onExport={handleExport}
       />
