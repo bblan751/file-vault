@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
-import { Lock, Plus, Search, LayoutGrid, List, ArrowDown, X, PenLine, Trash2 } from 'lucide-react';
+import { Lock, Plus, Search, LayoutGrid, List, ArrowDown, X, PenLine, Trash2, Download, Upload } from 'lucide-react';
 import { BottomTabBar, type TabId } from '../components/BottomTabBar';
 import { FileGrid } from '../components/FileGrid';
 import { FileList } from '../components/FileList';
@@ -28,6 +28,8 @@ interface VaultScreenProps {
   createFolder: (name: string) => Promise<void>;
   renameFolder: (id: string, name: string) => Promise<void>;
   deleteFolder: (id: string) => Promise<void>;
+  exportBackup: () => Promise<Blob>;
+  importBackup: (file: File) => Promise<{ fileCount: number; folderCount: number }>;
   refreshFiles: () => Promise<void>;
 }
 
@@ -44,6 +46,8 @@ export function VaultScreen({
   createFolder,
   renameFolder,
   deleteFolder,
+  exportBackup,
+  importBackup,
   refreshFiles,
 }: VaultScreenProps) {
   const [tab, setTab] = useState<TabId>('files');
@@ -66,9 +70,11 @@ export function VaultScreen({
     () => localStorage.getItem('vault-autolock') || 'background'
   );
   const [showDestroyConfirm, setShowDestroyConfirm] = useState(0);
+  const [backupStatus, setBackupStatus] = useState<string | null>(null);
 
   const photoInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const backupInputRef = useRef<HTMLInputElement>(null);
 
   const sortFiles = (files: FileMeta[]) => {
     const sorted = [...files];
@@ -119,6 +125,40 @@ export function VaultScreen({
     }
     e.target.value = '';
   };
+
+  const handleBackupExport = useCallback(async () => {
+    try {
+      setBackupStatus('Exporting...');
+      const blob = await exportBackup();
+      const date = new Date().toISOString().slice(0, 10);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `vault-backup-${date}.vault`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setBackupStatus('Backup exported successfully');
+      setTimeout(() => setBackupStatus(null), 3000);
+    } catch (err) {
+      setBackupStatus('Export failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      setTimeout(() => setBackupStatus(null), 4000);
+    }
+  }, [exportBackup]);
+
+  const handleBackupImport = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    try {
+      setBackupStatus('Importing...');
+      const result = await importBackup(file);
+      setBackupStatus(`Imported ${result.fileCount} file${result.fileCount !== 1 ? 's' : ''} and ${result.folderCount} folder${result.folderCount !== 1 ? 's' : ''}`);
+      setTimeout(() => setBackupStatus(null), 4000);
+    } catch (err) {
+      setBackupStatus('Import failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      setTimeout(() => setBackupStatus(null), 5000);
+    }
+  }, [importBackup]);
 
   const handleExport = useCallback(async (file: FileMeta) => {
     const buffer = await readFile(file.id, file.iv);
@@ -196,6 +236,13 @@ export function VaultScreen({
         multiple
         className="hidden"
         onChange={handleFileInput}
+      />
+      <input
+        ref={backupInputRef}
+        type="file"
+        accept=".vault"
+        className="hidden"
+        onChange={handleBackupImport}
       />
 
       {/* Header */}
@@ -405,6 +452,42 @@ export function VaultScreen({
                 </p>
                 <p className="text-[#666] text-xs font-[DM_Mono] mt-1">
                   {state.files.length} file{state.files.length !== 1 ? 's' : ''} stored
+                </p>
+              </div>
+            </div>
+
+            {/* Backup */}
+            <div>
+              <h3 className="text-[#888] text-xs font-[Instrument_Sans] uppercase tracking-wider mb-3">
+                Backup & Restore
+              </h3>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={handleBackupExport}
+                  className="flex items-center gap-3 p-4 rounded-xl bg-[#1a1a1c] text-white
+                    font-[Instrument_Sans] text-sm text-left min-h-[48px] active:bg-[#222]"
+                >
+                  <Download size={20} className="text-[#f5a623]" />
+                  Export Backup
+                </button>
+                <button
+                  onClick={() => backupInputRef.current?.click()}
+                  className="flex items-center gap-3 p-4 rounded-xl bg-[#1a1a1c] text-white
+                    font-[Instrument_Sans] text-sm text-left min-h-[48px] active:bg-[#222]"
+                >
+                  <Upload size={20} className="text-[#f5a623]" />
+                  Import Backup
+                </button>
+                {backupStatus && (
+                  <p className={`text-xs font-[Instrument_Sans] px-2 ${
+                    backupStatus.startsWith('Import failed') || backupStatus.startsWith('Export failed')
+                      ? 'text-red-400' : 'text-green-400'
+                  }`}>
+                    {backupStatus}
+                  </p>
+                )}
+                <p className="text-[#555] text-xs font-[Instrument_Sans] px-2 mt-1">
+                  Backups are encrypted with your current PIN. You'll need the same PIN to restore.
                 </p>
               </div>
             </div>

@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { deriveKey, getSalt } from '../crypto/keys';
+import { encrypt, decrypt } from '../crypto/vault';
 import {
   type FileMeta,
   type Folder,
@@ -306,6 +307,119 @@ export function useVault() {
     }
   }, []);
 
+  const exportBackup = useCallback(async (): Promise<Blob> => {
+    if (!keyRef.current) throw new Error('Vault locked');
+    const type = vaultTypeRef.current;
+    const key = keyRef.current;
+
+    const files = await getFileIndex(key, type);
+    const folders = await getFolders(key, type);
+
+    // Read all file blobs and encode as base64
+    const fileBlobs: Record<string, string> = {};
+    for (const file of files) {
+      const buffer = await getFile(key, type, file.id, file.iv);
+      const bytes = new Uint8Array(buffer);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      fileBlobs[file.id] = btoa(binary);
+    }
+
+    const payload = JSON.stringify({
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      files,
+      folders,
+      fileBlobs,
+    });
+
+    // Encrypt the entire payload
+    const encoded = new TextEncoder().encode(payload);
+    const { encrypted, iv } = await encrypt(key, encoded.buffer as ArrayBuffer);
+
+    // Pack as: 12 bytes IV + encrypted data
+    const ivBytes = new Uint8Array(iv);
+    const encBytes = new Uint8Array(encrypted);
+    const combined = new Uint8Array(ivBytes.length + encBytes.length);
+    combined.set(ivBytes, 0);
+    combined.set(encBytes, ivBytes.length);
+
+    return new Blob([combined], { type: 'application/octet-stream' });
+  }, []);
+
+  const importBackup = useCallback(async (file: File): Promise<{ fileCount: number; folderCount: number }> => {
+    if (!keyRef.current) throw new Error('Vault locked');
+    const type = vaultTypeRef.current;
+    const key = keyRef.current;
+
+    const arrayBuffer = await file.arrayBuffer();
+    const combined = new Uint8Array(arrayBuffer);
+
+    // Extract IV (first 12 bytes) and encrypted data
+    const iv = combined.slice(0, 12);
+    const encData = combined.slice(12);
+
+    let decrypted: ArrayBuffer;
+    try {
+      decrypted = await decrypt(key, encData.buffer.slice(encData.byteOffset, encData.byteOffset + encData.byteLength), iv);
+    } catch {
+      throw new Error('Failed to decrypt backup. Make sure you are using the same PIN that created this backup.');
+    }
+
+    const json = new TextDecoder().decode(decrypted);
+    const payload = JSON.parse(json);
+
+    if (payload.version !== 1) {
+      throw new Error('Unsupported backup version');
+    }
+
+    const backupFiles: FileMeta[] = payload.files;
+    const backupFolders: Folder[] = payload.folders;
+    const fileBlobs: Record<string, string> = payload.fileBlobs;
+
+    // Get existing data to merge
+    const existingFiles = await getFileIndex(key, type);
+    const existingFolders = await getFolders(key, type);
+    const existingFileIds = new Set(existingFiles.map((f) => f.id));
+    const existingFolderIds = new Set(existingFolders.map((f) => f.id));
+
+    let importedFiles = 0;
+    let importedFolders = 0;
+
+    // Import folders that don't already exist
+    for (const folder of backupFolders) {
+      if (!existingFolderIds.has(folder.id)) {
+        existingFolders.push(folder);
+        importedFolders++;
+      }
+    }
+
+    // Import files that don't already exist
+    for (const fileMeta of backupFiles) {
+      if (!existingFileIds.has(fileMeta.id) && fileBlobs[fileMeta.id]) {
+        // Decode base64 back to ArrayBuffer
+        const binary = atob(fileBlobs[fileMeta.id]);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+
+        // Store the file (re-encrypts with current key)
+        const newIv = await storeFile(key, type, fileMeta.id, bytes.buffer as ArrayBuffer);
+        existingFiles.push({ ...fileMeta, iv: newIv });
+        importedFiles++;
+      }
+    }
+
+    await saveFileIndex(key, type, existingFiles);
+    await saveFolders(key, type, existingFolders);
+    await refreshFiles();
+
+    return { fileCount: importedFiles, folderCount: importedFolders };
+  }, [refreshFiles]);
+
   return {
     state,
     lock,
@@ -323,6 +437,8 @@ export function useVault() {
     deleteFolder,
     changePin,
     clearDecoyVault,
+    exportBackup,
+    importBackup,
     refreshFiles,
   };
 }

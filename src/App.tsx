@@ -69,6 +69,8 @@ export default function App() {
       createFolder={vault.createFolder}
       renameFolder={vault.renameFolder}
       deleteFolder={vault.deleteFolder}
+      exportBackup={vault.exportBackup}
+      importBackup={vault.importBackup}
       refreshFiles={vault.refreshFiles}
     />
   );
