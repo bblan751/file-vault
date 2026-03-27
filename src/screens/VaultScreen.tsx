@@ -50,7 +50,7 @@ export function VaultScreen({
   importBackup,
   refreshFiles,
 }: VaultScreenProps) {
-  const [tab, setTab] = useState<TabId>('files');
+  const [tab, setTab] = useState<TabId>('folders');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [sortBy, setSortBy] = useState<SortBy>('date');
   const [searchQuery, setSearchQuery] = useState('');
