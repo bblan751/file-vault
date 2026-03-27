@@ -14,7 +14,9 @@
       "Bash(npm run:*)",
       "Bash(timeout 10 npx vite --host)",
       "Bash(gh auth:*)",
-      "Bash(gh repo:*)"
+      "Bash(gh repo:*)",
+      "Bash(gh api:*)",
+      "Bash(gh run:*)"
     ]
   }
 }

@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
-import { Lock, Plus, Search, LayoutGrid, List, ArrowDown, X } from 'lucide-react';
+import { Lock, Plus, Search, LayoutGrid, List, ArrowDown, X, PenLine, Trash2 } from 'lucide-react';
 import { BottomTabBar, type TabId } from '../components/BottomTabBar';
 import { FileGrid } from '../components/FileGrid';
 import { FileList } from '../components/FileList';
@@ -61,6 +61,7 @@ export function VaultScreen({
   const [moveTargetFile, setMoveTargetFile] = useState<FileMeta | null>(null);
   const [showRenameDialog, setShowRenameDialog] = useState(false);
   const [renameValue, setRenameValue] = useState('');
+  const [renameTargetId, setRenameTargetId] = useState<string | null>(null);
   const [autoLock, setAutoLock] = useState(
     () => localStorage.getItem('vault-autolock') || 'background'
   );
@@ -322,19 +323,39 @@ export function VaultScreen({
             ) : (
               <div className="flex flex-col gap-2">
                 {notes.map((note) => (
-                  <button
+                  <div
                     key={note.id}
-                    onClick={() => handleOpenNote(note)}
-                    className="flex flex-col gap-1 p-4 rounded-xl bg-[#1a1a1c] active:bg-[#222]
-                      text-left min-h-[52px]"
+                    className="flex items-center gap-2 rounded-xl bg-[#1a1a1c]"
                   >
-                    <p className="text-white text-sm font-[Instrument_Sans]">
-                      {note.name.replace(/\.md$/, '')}
-                    </p>
-                    <p className="text-[#666] text-xs font-[DM_Mono]">
-                      {new Date(note.dateAdded).toLocaleDateString()} · {formatSize(note.size)}
-                    </p>
-                  </button>
+                    <button
+                      onClick={() => handleOpenNote(note)}
+                      className="flex flex-col gap-1 p-4 flex-1 min-w-0 active:bg-[#222]
+                        text-left min-h-[52px] rounded-l-xl"
+                    >
+                      <p className="text-white text-sm font-[Instrument_Sans] truncate">
+                        {note.name.replace(/\.md$/, '')}
+                      </p>
+                      <p className="text-[#666] text-xs font-[DM_Mono]">
+                        {new Date(note.dateAdded).toLocaleDateString()} · {formatSize(note.size)}
+                      </p>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setRenameTargetId(note.id);
+                        setRenameValue(note.name.replace(/\.md$/, ''));
+                        setShowRenameDialog(true);
+                      }}
+                      className="text-[#666] p-3 min-h-[44px] min-w-[44px] flex items-center justify-center"
+                    >
+                      <PenLine size={16} />
+                    </button>
+                    <button
+                      onClick={() => removeFile(note.id)}
+                      className="text-red-400 p-3 min-h-[44px] min-w-[44px] flex items-center justify-center"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
                 ))}
               </div>
             )}
@@ -479,6 +500,7 @@ export function VaultScreen({
         }}
         onRename={() => {
           if (contextFile) {
+            setRenameTargetId(contextFile.id);
             setRenameValue(contextFile.name);
             setShowRenameDialog(true);
           }
@@ -509,11 +531,11 @@ export function VaultScreen({
       )}
 
       {/* Rename Dialog */}
-      {showRenameDialog && contextFile && (
+      {showRenameDialog && renameTargetId && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/60" onClick={() => setShowRenameDialog(false)} />
+          <div className="absolute inset-0 bg-black/60" onClick={() => { setShowRenameDialog(false); setRenameTargetId(null); }} />
           <div className="relative bg-[#1a1a1c] rounded-2xl p-6 w-[90%] max-w-[350px]">
-            <h3 className="text-white font-[Instrument_Sans] font-semibold mb-4">Rename File</h3>
+            <h3 className="text-white font-[Instrument_Sans] font-semibold mb-4">Rename</h3>
             <input
               type="text"
               value={renameValue}
@@ -521,19 +543,38 @@ export function VaultScreen({
               className="w-full bg-[#222224] text-white rounded-xl px-4 py-3 font-[Instrument_Sans]
                 text-[16px] outline-none border border-[#333] focus:border-[#f5a623] mb-4"
               autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  const target = state.files.find((f) => f.id === renameTargetId);
+                  if (target && renameValue.trim()) {
+                    const newName = target.isNote && !renameValue.trim().endsWith('.md')
+                      ? renameValue.trim() + '.md'
+                      : renameValue.trim();
+                    renameFile(renameTargetId, newName);
+                    setShowRenameDialog(false);
+                    setRenameTargetId(null);
+                    setContextFile(null);
+                  }
+                }
+              }}
             />
             <div className="flex gap-2">
               <button
-                onClick={() => setShowRenameDialog(false)}
+                onClick={() => { setShowRenameDialog(false); setRenameTargetId(null); }}
                 className="flex-1 py-3 rounded-xl bg-[#333] text-white font-[Instrument_Sans] min-h-[44px]"
               >
                 Cancel
               </button>
               <button
                 onClick={async () => {
-                  if (contextFile && renameValue.trim()) {
-                    await renameFile(contextFile.id, renameValue.trim());
+                  const target = state.files.find((f) => f.id === renameTargetId);
+                  if (renameTargetId && renameValue.trim()) {
+                    const newName = target?.isNote && !renameValue.trim().endsWith('.md')
+                      ? renameValue.trim() + '.md'
+                      : renameValue.trim();
+                    await renameFile(renameTargetId, newName);
                     setShowRenameDialog(false);
+                    setRenameTargetId(null);
                     setContextFile(null);
                   }
                 }}
